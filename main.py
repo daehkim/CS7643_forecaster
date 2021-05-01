@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 from pylab import mpl, plt
 import os
+import json
 
 plt.style.use('seaborn')
 mpl.rcParams['font.family'] = 'serif'
@@ -56,7 +57,7 @@ def preprocess_data(df, configs):
 
 def load_data(stock, configs):
     # Check the configurations
-    look_back = configs['look_back']
+    look_back = 12
     w_hours = configs['w_hours']
 
     # Convert to numpy array
@@ -157,42 +158,145 @@ def run_RNN(x_train, y_train_rnn, x_test, y_test_rnn, output_path, data_name, co
     df.to_csv(
         './data_out/' + output_path + '/' + data_name + '_MSE_' + str(MSE) + '.csv')
 
+    return MSE
+
+
+def run_forecast(company, configs, dir_path):
+    output_path = '5yrs_shiftTime_' + configs['shift_time'] + '_model_' + configs['model'] + '_wHours_' + \
+                  str(configs['w_hours']) + '_numLayers_' + str(configs['num_layers']) + '_hiddenDim_' + \
+                  str(configs['hidden_dim'])
+    print('plot_out directory gen', os.system('mkdir plot_out\\' + output_path))
+    print('data_out directory gen', os.system('mkdir data_out\\' + output_path))
+
+    data_name = company + '_' + configs['shift_time'] + configs['additional_info']
+    df = import_data(data_name, dir_path, configs)
+
+    df = preprocess_data(df, configs)
+
+    x_train, y_train, x_test, y_test = load_data(df, configs)
+    print('x_train.shape = ', x_train.shape)
+    print('y_train.shape = ', y_train.shape)
+    print('x_test.shape = ', x_test.shape)
+    print('y_test.shape = ', y_test.shape)
+
+    # Change to tensor
+    x_train = torch.from_numpy(x_train).type(torch.Tensor).to(device)
+    x_test = torch.from_numpy(x_test).type(torch.Tensor).to(device)
+    y_train = torch.from_numpy(y_train).type(torch.Tensor).to(device)
+    y_test = torch.from_numpy(y_test).type(torch.Tensor).to(device)
+
+    data_name = data_name
+
+    MSE = run_RNN(x_train, y_train, x_test, y_test, output_path, data_name, configs)
+
+    return MSE
+
+def draw_plot(company_name, hyper_parameter, plot_data):
+
+    point_list = ['C0o-', 'C1o-', 'C2o-', 'C3o-', 'C4o-', 'C5o-']
+    x = np.arange(len(plot_data[0][1]))
+    x_label = np.zeros(len(plot_data[0][1]))
+    for i, val in enumerate(plot_data[0][1]):
+        x_label[i] = val[0]
+
+    fig, ax = plt.subplots(1, 1)
+    for j, model in enumerate(plot_data):
+        model_name = model[0]
+        y = np.zeros(len(model[1]))
+        for i, val in enumerate(model[1]):
+            y[i] = val[1]
+
+        print(company_name, model_name, hyper_parameter)
+        print(x)
+        print(y)
+
+        ax.plot(x, y, point_list[j], label=model_name)
+
+    ax.set_title(company_name + "'s MSE results w/ " + hyper_parameter, fontdict={'fontsize': 18, 'weight': 'bold'})
+    ax.set_ylabel('MSE', fontdict={'fontsize': 15, 'weight': 'bold'})
+    ax.set_xlabel(hyper_parameter, fontdict={'fontsize': 15, 'weight': 'bold'})
+    ax.set_xticks(x)
+    ax.set_xticklabels(x_label)
+    ax.legend()
+
+    dir_path = 'MSE_figures\\'+company_name
+    os.system('mkdir '+dir_path)
+    plt.savefig(dir_path+'\\'+company_name+'_'+hyper_parameter+'.png')
+
 
 if __name__ == '__main__':
-    data_list = ['AAPL', 'IBM', 'JNJ', 'VZ', 'XOM']
+    i = 0
 
+    # Initialization of the data
     # model: 'LSTM', 'GRU'
     # shift_time: '1hr', '5min'
-    configs = {'input_dim': 1, 'output_dim': 1, 'hidden_dim': 64, 'num_layers': 3,
-               'learning_rate': 0.000015, 'dropout': 0.05, 'w_hours': True, 'look_back': 8, 'model': 'GRU',
-               'shift_time': '1hr'}
-
+    # additional_info: '', '_GARCH', '_NEWS', '_GARCH_NEWS'
+    company_list = ['AAPL', 'IBM', 'JNJ', 'VZ', 'XOM']
     dir_path = 'data/'
+    configs = {'input_dim': 1, 'output_dim': 1, 'hidden_dim': 128, 'num_layers': 3,
+               'learning_rate': 0.000015, 'dropout': 0.05, 'w_hours': True, 'model': 'GRU',
+               'shift_time': '1hr', 'additional_info': ''}
 
-    for data in data_list:
-        output_path = '5yrs_shiftTime_' + configs['shift_time'] + '_model_' + configs['model'] + '_wHours_' + \
-                      str(configs['w_hours']) + '_numLayers_' + str(configs['num_layers']) + '_hiddenDim_' + \
-                      str(configs['hidden_dim']) + '_lookBack_' + str(configs['look_back'])
-        print('plot_out directory gen', os.system('mkdir plot_out\\' + output_path))
-        print('data_out directory gen', os.system('mkdir data_out\\' + output_path))
+    # Generate the test options
+    model_types = ['LSTM', 'GRU']
+    option_list = {}
+    option_list['hidden_dim'] = [32, 64, 128, 256]
+    option_list['num_layers'] = [2, 3, 4, 5]
+    option_list['dropout'] = [0.01, 0.05, 0.1, 0.2]
 
-        data_name = data + '_' + configs['shift_time']
-        df = import_data(data_name, dir_path, configs)
+    # Run and generates the volatility prediction MSE values for each option combination
+    data_per_company = []
+    for company in company_list:
+        data_per_model = []
+        for model in model_types:
+            MSE_data = {}
+            for key in option_list.keys():
+                MSE_data[key] = []
+                for option in option_list[key]:
+                    test_configs = configs.copy()
+                    test_configs[key] = option
+                    test_configs['model'] = model
 
-        df = preprocess_data(df, configs)
+                    if test_configs['hidden_dim'] == 16:
+                        test_configs['learning_rate'] = 0.00005
+                    elif test_configs['hidden_dim'] == 32:
+                        test_configs['learning_rate'] = 0.00002
+                    elif test_configs['hidden_dim'] == 64:
+                        test_configs['learning_rate'] = 0.000015
+                    elif test_configs['hidden_dim'] == 128:
+                        test_configs['learning_rate'] = 0.000005
+                    elif test_configs['hidden_dim'] == 256:
+                        test_configs['learning_rate'] = 0.000003
 
-        x_train, y_train, x_test, y_test = load_data(df, configs)
-        print('x_train.shape = ', x_train.shape)
-        print('y_train.shape = ', y_train.shape)
-        print('x_test.shape = ', x_test.shape)
-        print('y_test.shape = ', y_test.shape)
 
-        # Change to tensor
-        x_train = torch.from_numpy(x_train).type(torch.Tensor).to(device)
-        x_test = torch.from_numpy(x_test).type(torch.Tensor).to(device)
-        y_train = torch.from_numpy(y_train).type(torch.Tensor).to(device)
-        y_test = torch.from_numpy(y_test).type(torch.Tensor).to(device)
+                    MSE = run_forecast(company, test_configs, dir_path)
+                    #MSE = i
+                    i += 1
 
-        data_name = data_name
+                    MSE_data[key].append([option, MSE])
 
-        run_RNN(x_train, y_train, x_test, y_test, output_path, data_name, configs)
+            data_per_model.append([model, MSE_data])
+
+        data_per_company.append([company, data_per_model])
+
+    a_file = open('data_bf_process.json', 'w')
+    json.dump(data_per_company, a_file)
+    a_file.close()
+
+    # Generate the plot based on the MSE data
+    for d1 in data_per_company:
+        company_name = d1[0]
+        plot_data_list = {}
+        for d2 in d1[1]:
+            model_name = d2[0]
+            for key in d2[1].keys():
+                hyper_parameter_name = key
+                try:
+                    plot_data_list[hyper_parameter_name].append([model_name, d2[1][key]])
+                except:
+                    plot_data_list[hyper_parameter_name] = [[model_name, d2[1][key]]]
+
+        # Draw the graph
+        print(plot_data_list)
+        for hyper_parameter in plot_data_list.keys():
+            draw_plot(company_name, hyper_parameter, plot_data_list[hyper_parameter])

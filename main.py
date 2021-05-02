@@ -39,6 +39,10 @@ def import_data(data_name, dir_path, configs):
 def preprocess_data(df, configs):
     # Check the configurations
     w_hours = configs['w_hours']
+    if configs['model'][:5] == 'GARCH':
+        garch = 1
+    else:
+        garch = 0
 
     # Scale the data
     scaler = MinMaxScaler(feature_range=(-1, 1))
@@ -46,9 +50,17 @@ def preprocess_data(df, configs):
 
     if w_hours:
         df['hour'] = scaler.fit_transform(df['hour'].values.reshape(-1, 1))
-        df = df[['hour', 'vol']]
+        if garch == 0:
+            df = df[['hour', 'vol']]
+        else:
+            df['garch_vol'] = scaler.fit_transform(df['garch_vol'].values.reshape(-1, 1))
+            df = df[['hour', 'vol', 'garch_vol']]
     else:
-        df = df[['vol']]
+        if garch == 0:
+            df = df[['vol']]
+        else:
+            df['garch_vol'] = scaler.fit_transform(df['garch_vol'].values.reshape(-1, 1))
+            df = df[['vol', 'garch_vol']]
 
     df = df.fillna(method='ffill')
 
@@ -69,8 +81,7 @@ def load_data(stock, configs):
         data.append(data_raw[index: index + look_back])
 
     data = np.array(data)
-
-    print(data.shape)
+    data = data[:8000]
 
     test_set_size = int(np.round(0.2 * data.shape[0]))
     train_set_size = data.shape[0] - (test_set_size)
@@ -96,18 +107,25 @@ def run_RNN(x_train, y_train_rnn, x_test, y_test_rnn, output_path, data_name, co
     num_layers = configs['num_layers']
     learning_rate = configs['learning_rate']
     dropout = configs['dropout']
-    model = configs['model']
+    model_type = configs['model']
+
+    if model_type[:5] == 'GARCH':
+        garch = True
+    else:
+        garch = False
 
     if w_hours:
         input_dim += 1
 
+    if garch:
+        input_dim += 1
+
     # Set the model
     model = RNN(input_dim=input_dim, hidden_dim=hidden_dim, output_dim=output_dim, num_layers=num_layers,
-                device=device, dropout=dropout, model=model).to(device)
+                device=device, dropout=dropout, model=model_type).to(device)
     criterion = torch.nn.MSELoss(reduction='mean')
 
     optimiser = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    print(model)
 
     # Train model
     num_epochs = 1200
@@ -127,9 +145,11 @@ def run_RNN(x_train, y_train_rnn, x_test, y_test_rnn, output_path, data_name, co
     training_time = time.time() - start_time
     print("Training time: {}".format(training_time))
 
+    # Generates the plot to check the function.
+    """
     fig, ax = plt.subplots()
-    start = 100
-    end = 200
+    start = 0
+    end = 400
     x = np.arange(y_train_pred.shape[0])[start:end]
     y_pred = y_train_pred.cpu().detach().numpy()[:, 0][start:end]
     y_real = y_train_rnn.cpu().detach().numpy()[:, 0][start:end]
@@ -138,14 +158,22 @@ def run_RNN(x_train, y_train_rnn, x_test, y_test_rnn, output_path, data_name, co
     ax.legend()
     plt.savefig('plot_out/' + output_path + '/' + data_name + '.jpg')
     plt.show()
+    """
 
     # Test the result
+    print('x_test', x_test.shape)
+    x_temp = x_train[:x_test.shape[0]]
+    # Run to generate the hn and cn.
+    model(x_temp)
+
+    # Run to check the result
     y_test_pred = model(x_test)
     loss = criterion(y_test_pred, y_test_rnn)
     MSE = round(loss.item(), 6)
     print("Test MSE: ", MSE)
 
-    # Save the test results
+    # Save the prediction results
+    """
     x = np.arange(y_test_pred.shape[0]).tolist()
     y_test_pred = y_test_pred.cpu().detach().numpy()[:, 0].tolist()
     y_test_rnn = y_test_rnn.cpu().detach().numpy()[:, 0].tolist()
@@ -158,6 +186,12 @@ def run_RNN(x_train, y_train_rnn, x_test, y_test_rnn, output_path, data_name, co
     df.to_csv(
         './data_out/' + output_path + '/' + data_name + '_MSE_' + str(MSE) + '.csv')
 
+    del df
+    """
+
+    with open('result.txt', 'a') as outfile:
+        outfile.write(data_name + '_' + output_path + ': ' + str(MSE) + '\n')
+
     return MSE
 
 
@@ -168,9 +202,14 @@ def run_forecast(company, configs, dir_path):
     print('plot_out directory gen', os.system('mkdir plot_out\\' + output_path))
     print('data_out directory gen', os.system('mkdir data_out\\' + output_path))
 
-    data_name = company + '_' + configs['shift_time'] + configs['additional_info']
-    df = import_data(data_name, dir_path, configs)
+    if configs['model'][:5] == 'GARCH':
+        print('GARCH!')
+        data_name = company + '_' + configs['shift_time'] + '_garchvol'
+    else:
+        print('No GARCH!')
+        data_name = company + '_' + configs['shift_time']
 
+    df = import_data(data_name, dir_path, configs)
     df = preprocess_data(df, configs)
 
     x_train, y_train, x_test, y_test = load_data(df, configs)
@@ -184,8 +223,6 @@ def run_forecast(company, configs, dir_path):
     x_test = torch.from_numpy(x_test).type(torch.Tensor).to(device)
     y_train = torch.from_numpy(y_train).type(torch.Tensor).to(device)
     y_test = torch.from_numpy(y_test).type(torch.Tensor).to(device)
-
-    data_name = data_name
 
     MSE = run_RNN(x_train, y_train, x_test, y_test, output_path, data_name, configs)
 
@@ -225,24 +262,26 @@ def draw_plot(company_name, hyper_parameter, plot_data):
 
 
 if __name__ == '__main__':
-    i = 0
+    # Initialize the data file
+    with open('result.txt', 'w') as outfile:
+        outfile.write('')
 
     # Initialization of the data
     # model: 'LSTM', 'GRU'
     # shift_time: '1hr', '5min'
-    # additional_info: '', '_GARCH', '_NEWS', '_GARCH_NEWS'
-    company_list = ['AAPL', 'IBM', 'JNJ', 'VZ', 'XOM']
-    dir_path = 'data/'
+    option_list = {}
     configs = {'input_dim': 1, 'output_dim': 1, 'hidden_dim': 128, 'num_layers': 3,
                'learning_rate': 0.000015, 'dropout': 0.05, 'w_hours': True, 'model': 'GRU',
-               'shift_time': '1hr', 'additional_info': ''}
+               'shift_time': '1hr'}
+
+    dir_path = 'data/'
 
     # Generate the test options
-    model_types = ['LSTM', 'GRU']
-    option_list = {}
+    company_list = ['AAPL', 'IBM', 'JNJ', 'VZ', 'XOM']
+    model_types = ['LSTM', 'GARCH+LSTM', 'GRU', 'GARCH+GRU']
     option_list['hidden_dim'] = [32, 64, 128, 256]
     option_list['num_layers'] = [2, 3, 4, 5]
-    option_list['dropout'] = [0.01, 0.05, 0.1, 0.2]
+    option_list['dropout'] = [0, 0.01, 0.05, 0.1]
 
     # Run and generates the volatility prediction MSE values for each option combination
     data_per_company = []
@@ -264,14 +303,11 @@ if __name__ == '__main__':
                     elif test_configs['hidden_dim'] == 64:
                         test_configs['learning_rate'] = 0.000015
                     elif test_configs['hidden_dim'] == 128:
-                        test_configs['learning_rate'] = 0.000005
+                        test_configs['learning_rate'] = 0.000006
                     elif test_configs['hidden_dim'] == 256:
                         test_configs['learning_rate'] = 0.000003
 
-
                     MSE = run_forecast(company, test_configs, dir_path)
-                    #MSE = i
-                    i += 1
 
                     MSE_data[key].append([option, MSE])
 

@@ -1,0 +1,2 @@
+AAPL_1hr_5yrs_shiftTime_1hr_model_LSTM_wHours_True_numLayers_3_hiddenDim_32: 0.011141
+AAPL_1hr_5yrs_shiftTime_1hr_model_LSTM_wHours_True_numLayers_3_hiddenDim_64: 0.010782

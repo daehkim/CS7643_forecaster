@@ -124,6 +124,7 @@ def run_RNN(x_train, y_train_rnn, x_test, y_test_rnn, output_path, data_name, co
     model = RNN(input_dim=input_dim, hidden_dim=hidden_dim, output_dim=output_dim, num_layers=num_layers,
                 device=device, dropout=dropout, model=model_type).to(device)
     criterion = torch.nn.MSELoss(reduction='mean')
+    criterion_mae = torch.nn.L1Loss()
 
     optimiser = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
@@ -135,8 +136,9 @@ def run_RNN(x_train, y_train_rnn, x_test, y_test_rnn, output_path, data_name, co
     for t in range(num_epochs):
         y_train_pred = model(x_train)
         loss = criterion(y_train_pred, y_train_rnn)
+        loss_mae = criterion_mae(y_train_pred, y_train_rnn)
         if t % 100 == 0 and t != 0:
-            print("Epoch ", t, "MSE: ", loss.item())
+            print("Epoch ", t, "MSE: ", loss.item(), "MAE: ", loss_mae.item())
         hist[t] = loss.item()
         optimiser.zero_grad()
         loss.backward()
@@ -145,7 +147,6 @@ def run_RNN(x_train, y_train_rnn, x_test, y_test_rnn, output_path, data_name, co
     training_time = time.time() - start_time
     print("Training time: {}".format(training_time))
 
-    # Generates the plot to check the function.
     """
     fig, ax = plt.subplots()
     start = 0
@@ -169,10 +170,13 @@ def run_RNN(x_train, y_train_rnn, x_test, y_test_rnn, output_path, data_name, co
     # Run to check the result
     y_test_pred = model(x_test)
     loss = criterion(y_test_pred, y_test_rnn)
+    loss_mae = criterion_mae(y_test_pred, y_test_rnn)
     MSE = round(loss.item(), 6)
+    MAE = round(loss_mae.item(), 6)
     print("Test MSE: ", MSE)
+    print("Test MAE: ", MAE)
 
-    # Save the prediction results
+    # Save the test results
     """
     x = np.arange(y_test_pred.shape[0]).tolist()
     y_test_pred = y_test_pred.cpu().detach().numpy()[:, 0].tolist()
@@ -189,8 +193,8 @@ def run_RNN(x_train, y_train_rnn, x_test, y_test_rnn, output_path, data_name, co
     del df
     """
 
-    with open('result.txt', 'a') as outfile:
-        outfile.write(data_name + '_' + output_path + ': ' + str(MSE) + '\n')
+    with open('result_final.txt', 'a') as outfile:
+        outfile.write(data_name + '_' + output_path + ' -> MSE: ' + str(MSE) + ', MAE: ' + str(MAE) + '\n')
 
     return MSE
 
@@ -198,7 +202,7 @@ def run_RNN(x_train, y_train_rnn, x_test, y_test_rnn, output_path, data_name, co
 def run_forecast(company, configs, dir_path):
     output_path = '5yrs_shiftTime_' + configs['shift_time'] + '_model_' + configs['model'] + '_wHours_' + \
                   str(configs['w_hours']) + '_numLayers_' + str(configs['num_layers']) + '_hiddenDim_' + \
-                  str(configs['hidden_dim'])
+                  str(configs['hidden_dim']) + '_dropoutRate_' + str(configs['dropout'])
     print('plot_out directory gen', os.system('mkdir plot_out\\' + output_path))
     print('data_out directory gen', os.system('mkdir data_out\\' + output_path))
 
@@ -263,7 +267,7 @@ def draw_plot(company_name, hyper_parameter, plot_data):
 
 if __name__ == '__main__':
     # Initialize the data file
-    with open('result.txt', 'w') as outfile:
+    with open('result_final.txt', 'w') as outfile:
         outfile.write('')
 
     # Initialization of the data
@@ -277,7 +281,71 @@ if __name__ == '__main__':
     dir_path = 'data/'
 
     # Generate the test options
-    company_list = ['AAPL', 'IBM', 'JNJ', 'VZ', 'XOM']
+
+    #company_list = ['AAPL', 'IBM', 'JNJ', 'VZ', 'XOM']
+    company_list = ['VZ']
+    model_types = ['LSTM', 'GARCH+LSTM', 'GRU', 'GARCH+GRU']
+    option_list['hidden_dim'] = [32, 64, 128, 256]
+    option_list['num_layers'] = [2, 3, 4, 5]
+    option_list['dropout'] = [0, 0.01, 0.05, 0.1]
+
+    # Run and generates the volatility prediction MSE values for each option combination
+    data_per_company = []
+    for company in company_list:
+        data_per_model = []
+        for model in model_types:
+            MSE_data = {}
+            for key in option_list.keys():
+                MSE_data[key] = []
+                for option in option_list[key]:
+                    test_configs = configs.copy()
+                    test_configs[key] = option
+                    test_configs['model'] = model
+
+                    if test_configs['hidden_dim'] == 16:
+                        test_configs['learning_rate'] = 0.00005
+                    elif test_configs['hidden_dim'] == 32:
+                        test_configs['learning_rate'] = 0.00002
+                    elif test_configs['hidden_dim'] == 64:
+                        test_configs['learning_rate'] = 0.000015
+                    elif test_configs['hidden_dim'] == 128:
+                        test_configs['learning_rate'] = 0.000006
+                    elif test_configs['hidden_dim'] == 256:
+                        test_configs['learning_rate'] = 0.000003
+
+                    MSE = run_forecast(company, test_configs, dir_path)
+
+                    MSE_data[key].append([option, MSE])
+
+            data_per_model.append([model, MSE_data])
+
+        data_per_company.append([company, data_per_model])
+
+    a_file = open('data_bf_process.json', 'w')
+    json.dump(data_per_company, a_file)
+    a_file.close()
+
+    # Generate the plot based on the MSE data
+    for d1 in data_per_company:
+        company_name = d1[0]
+        plot_data_list = {}
+        for d2 in d1[1]:
+            model_name = d2[0]
+            for key in d2[1].keys():
+                hyper_parameter_name = key
+                try:
+                    plot_data_list[hyper_parameter_name].append([model_name, d2[1][key]])
+                except:
+                    plot_data_list[hyper_parameter_name] = [[model_name, d2[1][key]]]
+
+        # Draw the graph
+        print(plot_data_list)
+        for hyper_parameter in plot_data_list.keys():
+            draw_plot(company_name, hyper_parameter, plot_data_list[hyper_parameter])
+
+#########################################################
+
+    company_list = ['AAPL', 'IBM', 'JNJ', 'XOM']
     model_types = ['LSTM', 'GARCH+LSTM', 'GRU', 'GARCH+GRU']
     option_list['hidden_dim'] = [32, 64, 128, 256]
     option_list['num_layers'] = [2, 3, 4, 5]

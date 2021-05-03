@@ -1,6 +1,6 @@
 #!/bin/bash
 
-TICKERS=(IBM JNJ VZ XOM)
+TICKERS=(AAPL IBM JNJ VZ XOM)
 
 for tick in ${TICKERS[@]}
 do

@@ -10,7 +10,7 @@ mpl.rcParams['font.family'] = 'serif'
 import time
 from sklearn.preprocessing import MinMaxScaler
 import torch
-from rnn import RNN
+from rnn_model import RNN
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print("You are using device: %s" % device)
@@ -247,10 +247,6 @@ def draw_plot(company_name, hyper_parameter, plot_data):
         for i, val in enumerate(model[1]):
             y[i] = val[1]
 
-        print(company_name, model_name, hyper_parameter)
-        print(x)
-        print(y)
-
         ax.plot(x, y, point_list[j], label=model_name)
 
     ax.set_title(company_name + "'s MSE results w/ " + hyper_parameter, fontdict={'fontsize': 18, 'weight': 'bold'})
@@ -271,7 +267,7 @@ if __name__ == '__main__':
         outfile.write('')
 
     # Initialization of the data
-    # model: 'LSTM', 'GRU'
+    # model: 'LSTM', 'GRU', 'GARCH+LSTM', 'GARCH+GRU'
     # shift_time: '1hr', '5min'
     option_list = {}
     configs = {'input_dim': 1, 'output_dim': 1, 'hidden_dim': 128, 'num_layers': 3,
@@ -281,71 +277,7 @@ if __name__ == '__main__':
     dir_path = 'data/'
 
     # Generate the test options
-
-    #company_list = ['AAPL', 'IBM', 'JNJ', 'VZ', 'XOM']
-    company_list = ['VZ']
-    model_types = ['LSTM', 'GARCH+LSTM', 'GRU', 'GARCH+GRU']
-    option_list['hidden_dim'] = [32, 64, 128, 256]
-    option_list['num_layers'] = [2, 3, 4, 5]
-    option_list['dropout'] = [0, 0.01, 0.05, 0.1]
-
-    # Run and generates the volatility prediction MSE values for each option combination
-    data_per_company = []
-    for company in company_list:
-        data_per_model = []
-        for model in model_types:
-            MSE_data = {}
-            for key in option_list.keys():
-                MSE_data[key] = []
-                for option in option_list[key]:
-                    test_configs = configs.copy()
-                    test_configs[key] = option
-                    test_configs['model'] = model
-
-                    if test_configs['hidden_dim'] == 16:
-                        test_configs['learning_rate'] = 0.00005
-                    elif test_configs['hidden_dim'] == 32:
-                        test_configs['learning_rate'] = 0.00002
-                    elif test_configs['hidden_dim'] == 64:
-                        test_configs['learning_rate'] = 0.000015
-                    elif test_configs['hidden_dim'] == 128:
-                        test_configs['learning_rate'] = 0.000006
-                    elif test_configs['hidden_dim'] == 256:
-                        test_configs['learning_rate'] = 0.000003
-
-                    MSE = run_forecast(company, test_configs, dir_path)
-
-                    MSE_data[key].append([option, MSE])
-
-            data_per_model.append([model, MSE_data])
-
-        data_per_company.append([company, data_per_model])
-
-    a_file = open('data_bf_process.json', 'w')
-    json.dump(data_per_company, a_file)
-    a_file.close()
-
-    # Generate the plot based on the MSE data
-    for d1 in data_per_company:
-        company_name = d1[0]
-        plot_data_list = {}
-        for d2 in d1[1]:
-            model_name = d2[0]
-            for key in d2[1].keys():
-                hyper_parameter_name = key
-                try:
-                    plot_data_list[hyper_parameter_name].append([model_name, d2[1][key]])
-                except:
-                    plot_data_list[hyper_parameter_name] = [[model_name, d2[1][key]]]
-
-        # Draw the graph
-        print(plot_data_list)
-        for hyper_parameter in plot_data_list.keys():
-            draw_plot(company_name, hyper_parameter, plot_data_list[hyper_parameter])
-
-#########################################################
-
-    company_list = ['AAPL', 'IBM', 'JNJ', 'XOM']
+    company_list = ['AAPL', 'IBM', 'JNJ', 'VZ', 'XOM']
     model_types = ['LSTM', 'GARCH+LSTM', 'GRU', 'GARCH+GRU']
     option_list['hidden_dim'] = [32, 64, 128, 256]
     option_list['num_layers'] = [2, 3, 4, 5]
